@@ -88,12 +88,17 @@ public class ChangeStatusUpdater {
     final String repositoryOwner = feature.getParameters().get(C.getRepositoryOwnerKey());
     final String repositoryName = feature.getParameters().get(C.getRepositoryNameKey());
     @Nullable final String context = feature.getParameters().get(C.getContextKey());
-    final boolean addComments = !StringUtil.isEmptyOrSpaces(feature.getParameters().get(C.getUseCommentsKey()));
     final boolean useGuestUrls = !StringUtil.isEmptyOrSpaces(feature.getParameters().get(C.getUseGuestUrlsKey()));
+
+    final GitHubApiCommentEvent commentEvent = GitHubApiCommentEvent.parse(feature.getParameters().get(C.getUseCommentsKey()));
+    final boolean shouldCommentAlways = commentEvent == GitHubApiCommentEvent.ALWAYS;
+    final boolean shouldCommentWithStatus = commentEvent == GitHubApiCommentEvent.WITH_STATUS;
 
     final GitHubApiReportEvent reportEvent = GitHubApiReportEvent.parse(feature.getParameters().get(C.getReportOnKey()));
     final boolean shouldReportOnStart = reportEvent == GitHubApiReportEvent.ON_START_AND_FINISH || reportEvent == GitHubApiReportEvent.ON_START;
     final boolean shouldReportOnFinish = reportEvent == GitHubApiReportEvent.ON_START_AND_FINISH || reportEvent == GitHubApiReportEvent.ON_FINISH;
+    final boolean shouldReportOnFailure = reportEvent == GitHubApiReportEvent.ON_FAILURE;
+    final boolean shouldReportNever = reportEvent == GitHubApiReportEvent.NEVER;
 
     return new Handler() {
       @NotNull
@@ -105,16 +110,24 @@ public class ChangeStatusUpdater {
         return url;
       }
 
-      public boolean shouldReportOnStart() {
-        return shouldReportOnStart;
+      public boolean shouldUpdate( @NotNull final SRunningBuild build, final boolean starting ) {
+        return shouldUpdateStatus( build, starting ) || shouldCommentAlways;
       }
 
-      public boolean shouldReportOnFinish() {
-        return shouldReportOnFinish;
+      private boolean shouldUpdateStatus( @NotNull final SRunningBuild build, final boolean starting ) {
+        if (shouldReportNever) return false;
+
+        return starting && shouldReportOnStart ||
+                !starting && shouldReportOnFinish ||
+                !starting && shouldReportOnFailure && getGitHubChangeState(build) != GitHubChangeState.Success;
       }
 
       public void scheduleChangeStarted(@NotNull RepositoryVersion version, @NotNull SRunningBuild build) {
-        scheduleChangeUpdate(version, build, "Started TeamCity Build " + build.getFullName(), GitHubChangeState.Pending);
+        String hash = resolveCommitHash(version, build, GitHubChangeState.Pending);
+        if( shouldReportOnStart )
+          scheduleChangeUpdate(version, build, "Started TeamCity Build " + build.getFullName(), GitHubChangeState.Pending, hash);
+        if( shouldCommentAlways || (shouldCommentWithStatus && shouldReportOnStart) )
+          scheduleComment(version, build, GitHubChangeState.Pending, hash);
       }
 
       public void scheduleChangeCompeted(@NotNull RepositoryVersion version, @NotNull SRunningBuild build) {
@@ -123,7 +136,13 @@ public class ChangeStatusUpdater {
 
         final GitHubChangeState status = getGitHubChangeState(build);
         final String text = getGitHubChangeText(build);
-        scheduleChangeUpdate(version, build, "Finished TeamCity Build " + build.getFullName() + " " + text, status);
+        final String hash = resolveCommitHash(version, build, status);
+        final boolean willUpdateStatus = shouldReportOnFinish || (status != GitHubChangeState.Success && shouldReportOnFailure);
+
+        if( willUpdateStatus )
+          scheduleChangeUpdate(version, build, "Finished TeamCity Build " + build.getFullName() + " " + text, status, hash);
+        if( shouldCommentAlways || (shouldCommentWithStatus && willUpdateStatus) )
+          scheduleComment(version, build, status, hash);
       }
 
       @NotNull
@@ -150,17 +169,42 @@ public class ChangeStatusUpdater {
         }
       }
 
-      private void scheduleChangeUpdate(@NotNull final RepositoryVersion version,
-                                        @NotNull final SRunningBuild build,
-                                        @NotNull final String message,
-                                        @NotNull final GitHubChangeState status) {
-        LOG.info("Scheduling GitHub status update for " +
+      @NotNull
+      private String resolveCommitHash(@NotNull final RepositoryVersion version,
+                                       @NotNull final SRunningBuild build,
+                                       @NotNull final GitHubChangeState status) {
+        final String vcsBranch = version.getVcsBranch();
+        if (vcsBranch != null && api.isPullRequestMergeBranch(vcsBranch)) {
+          try {
+            final String hash = api.findPullRequestCommit(repositoryOwner, repositoryName, vcsBranch);
+            if (hash == null) {
+              throw new IOException("Failed to find head hash for commit from " + vcsBranch);
+            }
+            LOG.info("Resolved GitHub change commit for " + vcsBranch + " to point to pull request head for " +
+                    "hash: " + version.getVersion() + ", " +
+                    "newHash: " + hash + ", " +
+                    "branch: " + version.getVcsBranch() + ", " +
+                    "buildId: " + build.getBuildId() + ", " +
+                    "status: " + status);
+            return hash;
+          } catch (IOException e) {
+            LOG.warn("Failed to find status update hash for " + vcsBranch + " for repository " + repositoryName);
+          }
+        }
+        return version.getVersion();
+      }
+
+      private void scheduleComment(@NotNull final RepositoryVersion version,
+                                   @NotNull final SRunningBuild build,
+                                   @NotNull final GitHubChangeState status,
+                                   @NotNull final String commitHash) {
+        LOG.info("Scheduling GitHub comment for " +
                 "hash: " + version.getVersion() + ", " +
                 "branch: " + version.getVcsBranch() + ", " +
                 "buildId: " + build.getBuildId() + ", " +
                 "status: " + status);
 
-        myExecutor.submit(ExceptionUtil.catchAll("set change status on github", new Runnable() {
+        myExecutor.submit(ExceptionUtil.catchAll("add comment on github", new Runnable() {
           @NotNull
           private String getFailureText(@Nullable final STestRun testRun) {
             final String no_data = "<no details avaliable>";
@@ -182,10 +226,8 @@ public class ChangeStatusUpdater {
           }
 
           @NotNull
-          private String getComment(@NotNull RepositoryVersion version,
-                                    @NotNull SRunningBuild build,
-                                    boolean completed,
-                                    @NotNull String hash) {
+          private String getComment(@NotNull SRunningBuild build,
+                                    boolean completed) {
             final StringBuilder comment = new StringBuilder();
             comment.append("TeamCity ");
             final SBuildType bt = build.getBuildType();
@@ -243,57 +285,48 @@ public class ChangeStatusUpdater {
             return comment.toString();
           }
 
-          @NotNull
-          private String resolveCommitHash() {
-            final String vcsBranch = version.getVcsBranch();
-            if (vcsBranch != null && api.isPullRequestMergeBranch(vcsBranch)) {
-              try {
-                final String hash = api.findPullRequestCommit(repositoryOwner, repositoryName, vcsBranch);
-                if (hash == null) {
-                  throw new IOException("Failed to find head hash for commit from " + vcsBranch);
-                }
-                LOG.info("Resolved GitHub change commit for " + vcsBranch + " to point to pull request head for " +
-                        "hash: " + version.getVersion() + ", " +
-                        "newHash: " + hash + ", " +
-                        "branch: " + version.getVcsBranch() + ", " +
-                        "buildId: " + build.getBuildId() + ", " +
-                        "status: " + status);
-                return hash;
-              } catch (IOException e) {
-                LOG.warn("Failed to find status update hash for " + vcsBranch + " for repository " + repositoryName);
-              }
-            }
-            return version.getVersion();
-          }
-
           public void run() {
-            final String hash = resolveCommitHash();
+            try {
+              api.postComment(
+                      repositoryOwner,
+                      repositoryName,
+                      commitHash,
+                      getComment(build, status != GitHubChangeState.Pending)
+              );
+              LOG.info("Added comment to GitHub commit: " + commitHash + ", buildId: " + build.getBuildId() + ", status: " + status);
+            } catch (IOException e) {
+              LOG.warn("Failed add GitHub comment for branch: " + version.getVcsBranch() + ", buildId: " + build.getBuildId() + ", status: " + status + ". " + e.getMessage(), e);
+            }
+          }
+        }));
+      }
+
+      private void scheduleChangeUpdate(@NotNull final RepositoryVersion version,
+                                        @NotNull final SRunningBuild build,
+                                        @NotNull final String message,
+                                        @NotNull final GitHubChangeState status,
+                                        @NotNull final String commitHash) {
+        LOG.info("Scheduling GitHub status update for " +
+                "hash: " + version.getVersion() + ", " +
+                "branch: " + version.getVcsBranch() + ", " +
+                "buildId: " + build.getBuildId() + ", " +
+                "status: " + status);
+
+        myExecutor.submit(ExceptionUtil.catchAll("set change status on github", new Runnable() {
+          public void run() {
             try {
               api.setChangeStatus(
                       repositoryOwner,
                       repositoryName,
-                      hash,
+                      commitHash,
                       status,
                       getViewResultsUrl(build),
                       message,
                       context
               );
-              LOG.info("Updated GitHub status for hash: " + hash + ", buildId: " + build.getBuildId() + ", status: " + status);
+              LOG.info("Updated GitHub status for hash: " + commitHash + ", buildId: " + build.getBuildId() + ", status: " + status);
             } catch (IOException e) {
-              LOG.warn("Failed to update GitHub status for hash: " + hash + ", buildId: " + build.getBuildId() + ", status: " + status + ". " + e.getMessage(), e);
-            }
-            if (addComments) {
-              try {
-                api.postComment(
-                        repositoryOwner,
-                        repositoryName,
-                        hash,
-                        getComment(version, build, status != GitHubChangeState.Pending, hash)
-                );
-                LOG.info("Added comment to GitHub commit: " + hash + ", buildId: " + build.getBuildId() + ", status: " + status);
-              } catch (IOException e) {
-                LOG.warn("Failed add GitHub comment for branch: " + version.getVcsBranch() + ", buildId: " + build.getBuildId() + ", status: " + status + ". " + e.getMessage(), e);
-              }
+              LOG.warn("Failed to update GitHub status for hash: " + commitHash + ", buildId: " + build.getBuildId() + ", status: " + status + ". " + e.getMessage(), e);
             }
           }
         }));
@@ -301,9 +334,8 @@ public class ChangeStatusUpdater {
     };
   }
 
-  public static interface Handler {
-    boolean shouldReportOnStart();
-    boolean shouldReportOnFinish();
+  public interface Handler {
+    boolean shouldUpdate( @NotNull  final SRunningBuild build, final boolean starting);
     void scheduleChangeStarted(@NotNull final RepositoryVersion hash, @NotNull final SRunningBuild build);
     void scheduleChangeCompeted(@NotNull final RepositoryVersion hash, @NotNull final SRunningBuild build);
   }

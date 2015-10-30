@@ -7,7 +7,9 @@ import org.jetbrains.annotations.Nullable;
 public enum GitHubApiReportEvent {
   ON_START_AND_FINISH("on start and finish"),
   ON_START("on start"),
-  ON_FINISH("on finish");
+  ON_FINISH("on finish"),
+  ON_FAILURE("on failure"),
+  NEVER("never");
 
   private final String myValue;
 
@@ -23,7 +25,8 @@ public enum GitHubApiReportEvent {
   @NotNull
   public static GitHubApiReportEvent parse(@Nullable final String value) {
     //migration
-    if (value == null || StringUtil.isEmptyOrSpaces(value)) return ON_START_AND_FINISH;
+    if (value == null || StringUtil.isEmptyOrSpaces(value))
+      return ON_START_AND_FINISH;
 
     for (GitHubApiReportEvent v : values()) {
       if (v.getValue().equals(value)) return v;

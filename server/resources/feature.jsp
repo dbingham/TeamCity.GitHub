@@ -45,16 +45,24 @@
 
     <props:selectSectionPropertyContent value="${keys.reportOnFinishValue}" caption="Build finish only">
     </props:selectSectionPropertyContent>
+
+    <props:selectSectionPropertyContent value="${keys.reportOnFailureValue}" caption="Build failure only">
+    </props:selectSectionPropertyContent>
+
+    <props:selectSectionPropertyContent value="${keys.reportOnNeverValue}" caption="Never">
+    </props:selectSectionPropertyContent>
   </props:selectSectionProperty>
 
-  <tr>
-    <th><label for="${keys.useCommentsKey}">Use comments:</label></th>
-    <td>
-      <props:checkboxProperty name="${keys.useCommentsKey}"/>
-      <label for="${keys.useCommentsKey}">Comment pull request with build details</label>
-      <span class="error" id="error_${keys.useCommentsKey}"></span>
-    </td>
-  </tr>
+  <props:selectSectionProperty name="${keys.useCommentsKey}" title="Use comments:">
+    <props:selectSectionPropertyContent value="${keys.commentAlwaysKey}" caption="Always comment">
+    </props:selectSectionPropertyContent>
+
+    <props:selectSectionPropertyContent value="${keys.commentWithStatusKey}" caption="Comment when updating status">
+    </props:selectSectionPropertyContent>
+
+    <props:selectSectionPropertyContent value="${keys.commentNeverKey}" caption="Never comment">
+    </props:selectSectionPropertyContent>
+  </props:selectSectionProperty>
 
   <tr>
     <th><label for="${keys.useGuestUrlsKey}">Use guest links:</label></th>

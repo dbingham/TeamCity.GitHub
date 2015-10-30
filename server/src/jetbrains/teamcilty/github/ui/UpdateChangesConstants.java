@@ -18,6 +18,7 @@ package jetbrains.teamcilty.github.ui;
 
 import jetbrains.buildServer.agent.Constants;
 import jetbrains.teamcilty.github.api.GitHubApiAuthenticationType;
+import jetbrains.teamcilty.github.api.GitHubApiCommentEvent;
 import jetbrains.teamcilty.github.api.GitHubApiReportEvent;
 
 /**
@@ -35,7 +36,12 @@ public class UpdateChangesConstants {
   public String getReportOnStartAndFinishValue() { return GitHubApiReportEvent.ON_START_AND_FINISH.getValue(); }
   public String getReportOnStartValue() { return GitHubApiReportEvent.ON_START.getValue(); }
   public String getReportOnFinishValue() { return GitHubApiReportEvent.ON_FINISH.getValue(); }
+  public String getReportOnFailureValue() { return GitHubApiReportEvent.ON_FAILURE.getValue(); }
+  public String getReportOnNeverValue() { return GitHubApiReportEvent.NEVER.getValue(); }
   public String getUseCommentsKey() { return "guthub_comments"; }
+  public String getCommentAlwaysKey() { return GitHubApiCommentEvent.ALWAYS.getValue(); }
+  public String getCommentWithStatusKey() { return GitHubApiCommentEvent.WITH_STATUS.getValue(); }
+  public String getCommentNeverKey() { return GitHubApiCommentEvent.NEVER.getValue(); }
   public String getUseGuestUrlsKey() { return "guthub_guest"; }
   public String getAccessTokenKey() { return Constants.SECURE_PROPERTY_PREFIX +"github_access_token"; }
   public String getAuthenticationTypeKey() { return "guthub_authentication_type";}

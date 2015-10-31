@@ -1,3 +1,4 @@
+<%@ page import="jetbrains.teamcilty.github.api.GitHubApiCommentEvent" %>
 <%@ include file="/include-internal.jsp" %>
 <%@ taglib prefix="props" tagdir="/WEB-INF/tags/props" %>
 <%--
@@ -17,6 +18,13 @@
   --%>
 
 <jsp:useBean id="keys" class="jetbrains.teamcilty.github.ui.UpdateChangesConstants"/>
+<jsp:useBean id="propertiesBean" scope="request" type="jetbrains.buildServer.controllers.BasePropertiesBean"/>
+
+<% //Make sure UI reflects the proper migration of the value from the old checkbox to the new selection
+  String value = propertiesBean.getProperties().get(keys.getUseCommentsKey());
+  GitHubApiCommentEvent event = GitHubApiCommentEvent.parse(value);
+  propertiesBean.getProperties().put(keys.getUseCommentsKey(), event.getValue());
+%>
 
 <tr>
   <td colspan="2">Specify GitHub repository name and credentials to push status updates to</td>
